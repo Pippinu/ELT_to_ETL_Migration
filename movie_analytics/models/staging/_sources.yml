@@ -1,0 +1,14 @@
+version: 2
+
+sources:
+  - name: raw
+    description: Raw data ingested from CSV files into DuckDB.
+    tables:
+      - name: tmdb_movies
+        description: Core TMDB movie metadata including JSON genres.
+      - name: tmdb_credits
+        description: TMDB cast and crew information stored as JSON arrays.
+      - name: box_office
+        description: Box office revenue data (budget, domestic, foreign, worldwide) per movie.
+      - name: imdb_names
+        description: IMDb name.basics data for person biographical details (birth/death year).

@@ -1,0 +1,214 @@
+version: 2
+
+models:
+  - name: dim_date
+    description: "Date dimension with attributes for time-based analysis."
+    columns:
+      - name: date_key
+        description: "Surrogate key in YYYYMMDD format."
+        tests:
+          - unique
+          - not_null
+      - name: full_date
+        description: "Calendar date in standard YYYY-MM-DD format."
+        tests:
+          - unique
+          - not_null
+
+  - name: dim_movie
+    description: "Movie dimension detailing film attributes and budget tiering."
+    columns:
+      - name: movie_key
+        description: "Surrogate key for the movie entity."
+        tests:
+          - unique
+          - not_null
+      - name: tmdb_movie_id
+        description: "Business key from TMDB source system."
+        tests:
+          - unique
+          - not_null
+      - name: budget_tier
+        description: "Categorical tiering based on production budget."
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['Low Budget', 'Mid Budget', 'Blockbuster']
+
+  - name: dim_person
+    description: "Person dimension containing biographical and cast/crew metadata."
+    columns:
+      - name: person_key
+        description: "Surrogate key for the person entity."
+        tests:
+          - unique
+          - not_null
+      - name: person_name
+        description: "Full name of the actor, director, or crew member."
+        tests:
+          - not_null
+      - name: imdb_person_id
+        description: "Business key from IMDb. May be NULL for TMDB-only persons."
+
+  - name: dim_genre
+    description: "Genre dimension listing film genre classifications."
+    columns:
+      - name: genre_key
+        description: "Surrogate key for the genre entity."
+        tests:
+          - unique
+          - not_null
+      - name: genre_name
+        description: "Canonical name of the genre (e.g., Action, Drama)."
+        tests:
+          - unique
+          - not_null
+
+  - name: dim_credit_role
+    description: "Conformed dimension for credit types and job classifications."
+    columns:
+      - name: credit_role_key
+        description: "Surrogate key for the credit role entity."
+        tests:
+          - unique
+          - not_null
+      - name: credit_type
+        description: "High-level credit category."
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['CAST', 'CREW']
+      - name: job
+        description: "Specific role/job title (e.g., Director, Executive Producer)."
+        tests:
+          - not_null
+      - name: department
+        description: "Department associated with the job (e.g., Directing, Sound)."
+        tests:
+          - not_null
+
+  - name: bridge_movie_genre
+    description: "Many-to-many resolver bridge table between movies and genres."
+    columns:
+      - name: movie_key
+        description: "Foreign key referencing dim_movie."
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_movie')
+              field: movie_key
+      - name: genre_key
+        description: "Foreign key referencing dim_genre."
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_genre')
+              field: genre_key
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns:
+            - movie_key
+            - genre_key
+          description: "Ensures a movie is not assigned the same genre more than once."
+
+  - name: fct_movie_performance
+    description: "Fact table containing financial performance and rating metrics per movie."
+    columns:
+      - name: movie_key
+        description: "Foreign key referencing dim_movie."
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_movie')
+              field: movie_key
+      - name: release_date_key
+        description: "Foreign key referencing dim_date for theatrical release date."
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_date')
+              field: date_key
+      - name: revenue_worldwide_usd
+        description: "Total worldwide box office revenue in USD."
+        tests:
+          - not_null
+      - name: revenue_domestic_usd
+        description: "Domestic box office revenue in USD."
+        tests:
+          - not_null
+      - name: revenue_foreign_usd
+        description: "International box office revenue in USD."
+        tests:
+          - not_null
+      - name: budget_usd
+        description: "Production budget in USD."
+        tests:
+          - not_null
+      - name: profit_usd
+        description: "Net profit calculated as worldwide revenue minus budget."
+        tests:
+          - not_null
+      - name: vote_count
+        description: "Total number of user ratings recorded."
+        tests:
+          - not_null
+      - name: vote_avg
+        description: "Average user rating score."
+        tests:
+          - not_null
+      - name: weighted_score
+        description: "Bayesian weighted score. Defaults to 0 if vote_count is 0."
+        tests:
+          - not_null
+      - name: roi_ratio
+        description: "Return on investment ratio. May be NULL if budget is 0."
+    tests:
+      - dbt_utils.equal_rowcount:
+          compare_model: ref('dim_movie')
+          description: "Ensures 1:1 row count parity between the movie dimension and fact table."
+      - dbt_utils.expression_is_true:
+          expression: "revenue_worldwide_usd = revenue_domestic_usd + revenue_foreign_usd"
+          description: "Ensures worldwide revenue equals domestic plus international revenue."
+      - dbt_utils.expression_is_true:
+          expression: "profit_usd = revenue_worldwide_usd - budget_usd"
+          description: "Ensures calculated profit matches revenue minus budget."
+
+  - name: fct_movie_credit
+    description: "Factless fact table tracking individual credit occurrences per film."
+    columns:
+      - name: movie_key
+        description: "Foreign key referencing dim_movie."
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_movie')
+              field: movie_key
+      - name: person_key
+        description: "Foreign key referencing dim_person."
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_person')
+              field: person_key
+      - name: release_date_key
+        description: "Foreign key referencing dim_date."
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_date')
+              field: date_key
+      - name: credit_role_key
+        description: "Foreign key referencing dim_credit_role."
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_credit_role')
+              field: credit_role_key
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns:
+            - movie_key
+            - person_key
+            - credit_role_key
+          description: "Ensures no duplicate credit entries exist for the same movie, person, and role."

@@ -1,3 +1,6 @@
+
+target/
+dbt_packages/
+logs/
 data/raw/*.csv
 data/raw/*.tsv
-movie.duckdb
