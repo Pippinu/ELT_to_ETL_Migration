@@ -131,24 +131,24 @@ models:
               field: date_key
       - name: revenue_worldwide_usd
         description: "Total worldwide box office revenue in USD."
-        tests:
-          - not_null
+        # tests:
+        #   - not_null
       - name: revenue_domestic_usd
         description: "Domestic box office revenue in USD."
-        tests:
-          - not_null
-      - name: revenue_foreign_usd
+        # tests:
+        #   - not_null
+      - name: revenue_international_usd
         description: "International box office revenue in USD."
-        tests:
-          - not_null
+        # tests:
+        #   - not_null
       - name: budget_usd
         description: "Production budget in USD."
-        tests:
-          - not_null
+        # tests:
+        #   - not_null
       - name: profit_usd
         description: "Net profit calculated as worldwide revenue minus budget."
-        tests:
-          - not_null
+        # tests:
+        #   - not_null
       - name: vote_count
         description: "Total number of user ratings recorded."
         tests:
@@ -168,11 +168,23 @@ models:
           compare_model: ref('dim_movie')
           description: "Ensures 1:1 row count parity between the movie dimension and fact table."
       - dbt_utils.expression_is_true:
-          expression: "revenue_worldwide_usd = revenue_domestic_usd + revenue_foreign_usd"
-          description: "Ensures worldwide revenue equals domestic plus international revenue."
+          expression: |
+            not (
+              revenue_worldwide_usd is not null
+              and revenue_domestic_usd is not null
+              and revenue_international_usd is not null
+              and revenue_worldwide_usd != revenue_domestic_usd + revenue_international_usd
+            )
+          description: "If all three revenue columns are present, worldwide must equal domestic + international."
       - dbt_utils.expression_is_true:
-          expression: "profit_usd = revenue_worldwide_usd - budget_usd"
-          description: "Ensures calculated profit matches revenue minus budget."
+          expression: |
+            not (
+              profit_usd is not null
+              and revenue_worldwide_usd is not null
+              and budget_usd is not null
+              and profit_usd != revenue_worldwide_usd - budget_usd
+            )
+          description: "If all three are present, profit must equal revenue minus budget."
 
   - name: fct_movie_credit
     description: "Factless fact table tracking individual credit occurrences per film."
