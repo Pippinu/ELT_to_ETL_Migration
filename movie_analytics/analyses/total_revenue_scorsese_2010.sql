@@ -1,3 +1,5 @@
+-- GOOD QUERY
+
 -- Sum of worldwide revenue for all movies Martin Scorsese worked on (any credit) in the 2010s
 SELECT
     SUM(fp.revenue_worldwide_usd) AS total_revenue

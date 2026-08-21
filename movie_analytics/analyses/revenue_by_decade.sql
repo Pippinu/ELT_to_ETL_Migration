@@ -1,3 +1,7 @@
+-- Possibile iniziare con questa query per dimostrare che i film preguerra 
+-- hanno dati finanziari probabilemente approssimati e non adeguati all'inflazione
+-- quindi suggerisce di tagliare tali decadi dalle successive query
+
 -- Total worldwide revenue per decade
 SELECT
     d.decade,

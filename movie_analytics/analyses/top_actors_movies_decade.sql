@@ -1,3 +1,4 @@
+-- GOOD QUERY
 -- Shows the actor with the most distinct films in each decade
 WITH actor_movies AS (
     SELECT

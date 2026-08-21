@@ -1,3 +1,4 @@
+-- GOOD QUERY
 -- Worldwide revenue for Science Fiction films per decade
 SELECT
     d.decade,

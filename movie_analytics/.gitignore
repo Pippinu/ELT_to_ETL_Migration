@@ -4,3 +4,4 @@ dbt_packages/
 logs/
 data/raw/*.csv
 data/raw/*.tsv
+*.txt

@@ -1,0 +1,349 @@
+# Project Wrap-Up: Movie Analytics Data Warehouse
+
+## 1. Project Overview
+
+### Objective
+Built an ELT Data Warehouse for a university exam using:
+- **DuckDB** as the analytical database
+- **dbt** for transformations, testing, and layered ELT modeling
+- **IMDb, TMDB, and Box Office** datasets
+- **Golfarelli–Rizzi Dimensional Fact Model (DFM)** for conceptual design
+- **Kimball-style dimensional implementation** with a star schema
+
+### Source Datasets
+| Dataset | File | Key Columns |
+|---------|------|-------------|
+| TMDB Movies | `tmdb_5000_movies.csv` | `id`, `title`, `budget`, `revenue`, `release_date`, `vote_average`, `vote_count`, `genres` (JSON) |
+| TMDB Credits | `title_5000_credits.csv` | `movie_id`, `title`, `cast` (JSON), `crew` (JSON) |
+| Box Office | `moviesboxoffice.csv` | `Release Group`, `$Worldwide`, `$Domestic`, `$Foreign`, `Year` |
+| IMDb Names | `name.cast.csv` | `nconst`, `primaryName`, `birthYear`, `deathYear` |
+
+---
+
+## 2. Key Strategic Decisions
+
+### 2.1 Genre Handling
+- Extracted from TMDB's `genres` JSON column in staging
+- Used for `bridge_movie_genre` with **full attribution** policy
+- A movie contributes its full financial value to **every** assigned genre
+
+### 2.2 Entity Matching Strategy
+
+**Movie Matching (TMDB ↔ Box Office):**
+- Used **fuzzy matching** with `abs(year_diff) <= 1` tolerance (handles December-January release date discrepancies)
+- Scoring matrix:
+  - Score 4: Exact title + exact year
+  - Score 3: Case-insensitive title + exact year
+  - Score 2: Case-insensitive title + year offset (±1)
+  - Score 1: Substring match + exact year
+  - Score 0: No match
+- Applied `QUALIFY ROW_NUMBER() ... = 1` to pick top match per TMDB movie
+
+**Person Matching (TMDB Credits ↔ IMDb Names):**
+- Matched solely on **exact name** (no shared ID between systems)
+- Used `CASE WHEN imdb_person_id IS NOT NULL THEN 1 ELSE 0 END` for honest match scoring
+- `QUALIFY` picks first match when duplicates exist
+
+### 2.3 Crew Whitelist
+Only retained these top production roles from crew data:
+```
+Director
+Writer
+Producer
+Executive Producer
+Director of Photography
+Original Music Composer
+```
+Applied in **intermediate layer**, not staging (keeps raw data pristine).
+
+### 2.4 Financial Data Priority
+- **Box Office** as primary source for revenue (`$Worldwide`, `$Domestic`, `$Foreign`)
+- **TMDB** as fallback for worldwide revenue
+- **TMDB** as exclusive source for `budget`, `vote_count`, `vote_avg`
+
+### 2.5 Derived Measures (Computed in Marts Layer)
+| Measure | Formula |
+|---------|---------|
+| `revenue_foreign_usd` | `revenue_worldwide_usd - revenue_domestic_usd` |
+| `profit_usd` | `revenue_worldwide_usd - budget_usd` |
+| `weighted_score` | `vote_count * vote_avg` |
+| `roi_ratio` | `(revenue_worldwide_usd - budget_usd) / NULLIF(budget_usd, 0)` |
+| `budget_tier` | `'Low Budget'` (<10M), `'Mid Budget'` (10-50M), `'Blockbuster'` (>50M) |
+
+### 2.6 Dropped Columns
+**Box Office:** `Rank`, `Domestic %`, `Foreign %`, `Genres`, `Rating`  
+**IMDb Names:** `primaryProfession`, `knownForTitles`  
+**TMDB Movies:** `homepage`, `keywords`, `original_language`, `overview`, `popularity`, `production_companies`, `production_countries`, `spoken_languages`, `status`, `tagline`
+
+---
+
+## 3. DBT Architecture (3-Layer)
+
+### 3.1 Staging Layer (`models/staging/`)
+- **Rule:** 1-to-1 mapping with raw sources
+- **Responsibilities:** Column renaming, type casting, JSON parsing
+- **Prohibitions:** NO joins, NO business filtering, NO aggregations
+- **Models:**
+  - `stg_tmdb_movies.sql` - Parses genres JSON, cleans financials
+  - `stg_tmdb_credits.sql` - Parses cast/crew JSON arrays
+  - `stg_boxoffice.sql` - Cleans currency strings, drops unused columns
+  - `stg_imdb_names.sql` - Cleans biographical data
+
+### 3.2 Intermediate Layer (`models/intermediate/`)
+- **Rule:** Multi-table joins, entity matching, business filtering
+- **Responsibilities:** Data integration, deduplication (`QUALIFY`)
+- **Models:**
+  - `int_genres_exploded.sql` - Unnests genre arrays into rows
+  - `int_movie_matching.sql` - Fuzzy matches TMDB to Box Office
+  - `int_person_matching.sql` - Matches TMDB credits to IMDb names
+  - `int_credits_union.sql` - Unions cast + filtered crew, applies whitelist, deduplicates credits
+  - `int_merged_movie.sql` - Consolidates TMDB + Box Office financials, filters NULL release dates
+
+### 3.3 Marts Layer (`models/marts/`)
+- **Rule:** Production-ready star schema
+- **Responsibilities:** Surrogate keys, derived measures, conformed dimensions
+- **Models:**
+  - `dim_date.sql` - Date spine (1900-2050) with day/month/year/decade
+  - `dim_movie.sql` - Movie dimension with `budget_tier`
+  - `dim_person.sql` - Person dimension with biographical data
+  - `dim_credit_role.sql` - Small conformed dimension for roles
+  - `dim_genre.sql` - Genre dimension
+  - `bridge_movie_genre.sql` - M:N resolver for movie-genre relationships
+  - `fct_movie_performance.sql` - Fact table with financial/rating measures
+  - `fct_movie_credit.sql` - Factless fact for filmography analysis
+
+---
+
+## 4. Final Star Schema Diagram
+
+```
+┌─────────────────────┐      ┌─────────────────────┐
+│     dim_date        │      │     dim_movie       │
+│─────────────────────│      │─────────────────────│
+│ date_key (PK)       │      │ movie_key (PK)      │
+│ full_date           │      │ tmdb_movie_id (BK)  │
+│ day                 │      │ title               │
+│ month_number        │      │ release_date        │
+│ month_name          │      │ budget_usd          │
+│ year                │      │ budget_tier         │
+│ decade              │      └─────────────────────┘
+└─────────────────────┘               │
+         │                            │
+         │                            │
+         ▼                            ▼
+┌─────────────────────┐      ┌─────────────────────┐
+│fct_movie_performance│      │bridge_movie_genre   │
+│─────────────────────│      │─────────────────────│
+│ movie_key (FK)      │◄─────│ movie_key (FK)      │
+│ release_date_key(FK)│      │ genre_key (FK)      │
+│ revenue_worldwide   │      └─────────────────────┘
+│ revenue_domestic    │               │
+│ revenue_foreign     │               │
+│ budget_usd          │               │
+│ profit_usd          │               ▼
+│ vote_count          │      ┌─────────────────────┐
+│ vote_avg            │      │     dim_genre       │
+│ weighted_score      │      │─────────────────────│
+│ roi_ratio           │      │ genre_key (PK)      │
+└─────────────────────┘      │ genre_name          │
+                             └─────────────────────┘
+         │
+         │
+         ▼
+┌─────────────────────┐      ┌─────────────────────┐
+│fct_movie_credit     │      │   dim_person        │
+│─────────────────────│      │─────────────────────│
+│ movie_key (FK)      ├──────│ person_key (PK)     │
+│ person_key (FK)     │      │ person_name         │
+│ release_date_key(FK)│      │ imdb_person_id (BK) │
+│ credit_role_key(FK) │      │ birth_year          │
+└─────────────────────┘      │ death_year          │
+         │                   └─────────────────────┘
+         │
+         ▼
+┌─────────────────────┐
+│  dim_credit_role    │
+│─────────────────────│
+│ credit_role_key(PK) │
+│ credit_type         │
+│ job                 │
+│ department          │
+└─────────────────────┘
+```
+
+---
+
+## 5. Current Project Structure
+
+**Important:** All files are attached as `.txt` but have their original extension. Use the `project_tree.txt` file to understand each file's original format.
+
+```
+movie_analytics/
+├── dbt_project.yml
+├── packages.yml                            # includes dbt_utils
+├── models/
+│   ├── staging/
+│   │   ├── _sources.yml
+│   │   ├── stg_boxoffice.sql
+│   │   ├── stg_imdb_names.sql
+│   │   ├── stg_tmdb_credits.sql
+│   │   └── stg_tmdb_movies.sql
+│   ├── intermediate/
+│   │   ├── int_credits_union.sql           # includes QUALIFY deduplication
+│   │   ├── int_genres_exploded.sql
+│   │   ├── int_merged_movie.sql            # filters out NULL release_date
+│   │   ├── int_movie_matching.sql
+│   │   └── int_person_matching.sql
+│   └── marts/
+│       ├── _marts__models.yml              # 51 generic tests (unique, not_null, relationships, expression, etc.)
+│       ├── bridge_movie_genre.sql
+│       ├── dim_credit_role.sql
+│       ├── dim_date.sql
+│       ├── dim_genre.sql
+│       ├── dim_movie.sql
+│       ├── dim_person.sql
+│       ├── fct_movie_credit.sql
+│       └── fct_movie_performance.sql        # computes revenue_foreign = worldwide - domestic
+├── analyses/                                # (empty) – for OLAP queries to be implemented
+├── tests/
+│   └── assert_profit_consistency.sql        # singular test checking profit = revenue - budget
+└── target/                                  # dbt compiled/run artifacts – not committed
+```
+
+**Schema Names (DuckDB):**
+- `raw` - Raw ingested CSV data
+- `main_staging` - Staging models
+- `main_intermediate` - Intermediate models
+- `main_marts` - Final star schema
+
+---
+
+## 6. Key SQL Patterns Used
+
+### 6.1 JSON Parsing (Staging)
+```sql
+from_json(
+    genres,
+    '[{"id":"INTEGER", "name":"VARCHAR"}]'
+) as genres_parsed
+```
+
+### 6.2 JSON Unnesting (Intermediate)
+```sql
+cross join lateral unnest(genres_parsed) as genre(genre)
+```
+
+### 6.3 Deterministic Deduplication
+```sql
+qualify row_number() over (
+    partition by tmdb_movie_id 
+    order by match_score desc, boxoffice_release_year desc nulls last
+) = 1
+```
+
+### 6.4 Surrogate Key Generation
+```sql
+row_number() over (order by tmdb_movie_id) as movie_key
+```
+
+### 6.5 Derived Measures
+```sql
+case
+    when budget_usd < 10000000 then 'Low Budget'
+    when budget_usd <= 50000000 then 'Mid Budget'
+    else 'Blockbuster'
+end as budget_tier
+```
+
+---
+
+## 7. Critical Fixes & Improvements Applied
+
+During the testing phase, several critical fixes were implemented to ensure data quality and test passing:
+
+| Issue | Fix Applied |
+|-------|-------------|
+| **Row count mismatch** between `dim_movie` and `fct_movie_performance` | Filtered movies with `NULL` release_date in `int_merged_movie.sql` using `WHERE m.release_date IS NOT NULL` |
+| **Revenue breakdown inconsistency** (`worldwide ≠ domestic + foreign`) | Changed `fct_movie_performance.sql` to compute `revenue_foreign_usd` as `worldwide - domestic` instead of raw Box Office `Foreign` column |
+| **Duplicate credit entries** in `fct_movie_credit` | Added `QUALIFY` deduplication in `int_credits_union.sql` to ensure one row per `(movie, person, credit_role)` combination |
+| **YAML parse errors** for `accepted_values` tests | Updated syntax to use the new `arguments` property (e.g., `accepted_values: arguments: values: [...]`) |
+| **Deprecation warnings** | Updated all generic tests to use the recommended `arguments` syntax |
+
+---
+
+## 8. Current Test Coverage (51 Tests)
+
+All tests are defined in `_marts__models.yml` and cover:
+
+### Generic Tests
+- **Uniqueness** & **not-null** constraints.
+- **Referential integrity** via `relationships` tests across all facts
+- **Accepted values** for categorical columns (`budget_tier`, `credit_type`)
+
+### Business Logic Validation
+- `revenue_worldwide_usd = revenue_domestic_usd + revenue_foreign_usd`
+- `profit_usd = revenue_worldwide_usd - budget_usd`
+- Row-count parity between `dim_movie` and `fct_movie_performance`
+
+### Composite Uniqueness (using dbt_utils)
+- `bridge_movie_genre`: no duplicate `(movie_key, genre_key)` combinations
+- `fct_movie_credit`: no duplicate `(movie_key, person_key, credit_role_key)` combinations
+
+### Singular Test
+- `assert_profit_consistency.sql`: verifies profit matches revenue minus budget for all rows
+
+**Final Status:** All 51 tests pass.
+
+---
+
+## 9. Current State & Next Steps
+
+### ✅ Completed
+- Conceptual DFM design
+- Star/snowflake logical schema
+- All staging models (4 files)
+- All intermediate models (5 files) with critical fixes
+- All mart layer models (8 files)
+- Surrogate key strategy
+- Comprehensive test suite (51 tests, all passing)
+- Bug fixes applied (NULL release dates, revenue calculation, credit deduplication)
+- Schema generation completed (`dbt run` successful)
+
+### ⏳ Ready for Next Session
+1. **Implement OLAP Queries** – Define and execute analytical queries to demonstrate the data warehouse capabilities. Place them in the `analyses/` folder.
+2. **Generate dbt documentation**:
+   ```bash
+   dbt docs generate
+   dbt docs serve
+   ```
+3. **Validate non-additive aggregations** – Test that `ROI` and `weighted_score` behave correctly when grouped and aggregated.
+
+---
+
+## 10. Quick Reference: Core Marts Model Dependencies
+
+```
+stg_tmdb_movies.sql
+    ├── int_genres_exploded.sql → dim_genre.sql
+    │                         → bridge_movie_genre.sql
+    ├── int_movie_matching.sql (via int_merged_movie.sql)
+    │                         → dim_movie.sql
+    │                         → fct_movie_performance.sql
+    └── stg_tmdb_credits.sql → int_credits_union.sql
+                             → dim_credit_role.sql
+                             → fct_movie_credit.sql
+                             → (via int_person_matching.sql) → dim_person.sql
+
+stg_boxoffice.sql → int_movie_matching.sql
+                  → int_merged_movie.sql
+
+stg_imdb_names.sql → int_person_matching.sql → dim_person.sql
+```
+
+---
+
+## 11. Connection Details
+
+- **DuckDB Database:** `movies.duckdb` (in project root)
+- **Schemas:** `raw`, `main_staging`, `main_intermediate`, `main_marts`
+- **DBT Project Path:** Project root folder
