@@ -19,7 +19,7 @@ JOIN main_marts.fct_movie_credit fmc_act
     ON fmc_dir.movie_key = fmc_act.movie_key
 JOIN main_marts.dim_credit_role dcr_act 
     ON fmc_act.credit_role_key = dcr_act.credit_role_key 
-    AND dcr_act.job = 'Original Music Composer'
+    AND dcr_act.job = 'Actor'
 JOIN main_marts.dim_person dp_act 
     ON fmc_act.person_key = dp_act.person_key
     
