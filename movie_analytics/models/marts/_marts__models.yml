@@ -49,6 +49,10 @@ models:
           - not_null
       - name: imdb_person_id
         description: "Business key from IMDb. May be NULL for TMDB-only persons."
+    tests:
+      - dbt_utils.expression_is_true:
+          expression: "not (birth_year is not null and death_year is not null and birth_year >= death_year)"
+          description: "Ensures that a person's birth year is not after their death year."
 
   - name: dim_genre
     description: "Genre dimension listing film genre classifications."
@@ -83,10 +87,24 @@ models:
         description: "Specific role/job title (e.g., Director, Executive Producer)."
         tests:
           - not_null
+          - accepted_values:
+              arguments:
+                values: ['Director', 'Writer', 'Producer', 'Executive Producer',
+                         'Director of Photography', 'Original Music Composer']
       - name: department
         description: "Department associated with the job (e.g., Directing, Sound)."
         tests:
           - not_null
+          - accepted_values:
+              arguments:
+                values: ['Directing', 'Writing', 'Production', 'Sound', 'Camera', 'Acting']
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns:
+            - credit_type
+            - job
+            - department
+          description: "Ensures no duplicate credit entries exist for the same credit type, job, and department."
 
   - name: bridge_movie_genre
     description: "Many-to-many resolver bridge table between movies and genres."

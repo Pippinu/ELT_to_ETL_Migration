@@ -6,7 +6,7 @@ Table dim_date {
   date_key int [pk, increment]
   full_date date [not null, note: 'Non-dimension attribute']
   day int [note: 'Non-dimension attribute']
-  month int [note: 'Hierarchy level']
+  month_number int [note: 'Hierarchy level']
   month_name varchar [note: 'Non-dimension attribute']
   year int [note: 'Hierarchy level']
   decade int [note: 'Hierarchy level']
@@ -17,8 +17,9 @@ Table dim_date {
 Table dim_movie {
   movie_key int [pk, increment]
   tmdb_movie_id int [note: 'Non-dimension attribute']
-  imdb_title_id varchar [note: 'Non-dimension attribute']
   title varchar [not null]
+  release_date date [note: 'Carried for convenience; canonical grain lives via release_date_key in both facts']
+  budget_usd decimal(15,2) [note: 'Carried to derive budget_tier at the dimension level']
   budget_tier varchar [note: 'Derived dimensional attribute']
 
   Note: 'Shared Movie Dimension. Conformed across both facts.'
@@ -26,8 +27,8 @@ Table dim_movie {
 
 Table dim_person {
   person_key int [pk, increment]
-  person_id int [note: 'Non-dimension attribute']
-  name varchar [not null]
+  imdb_person_id int [note: 'Non-dimension attribute']
+  person_name varchar [not null]
   birth_year int
   death_year int
 
@@ -75,31 +76,37 @@ Table bridge_movie_genre {
 
 // 1. Movie Performance Fact (Star Schema)
 Table fact_movie_performance {
-  movie_performance_id int [pk, increment]
-  movie_key int [not null, ref: > dim_movie.movie_key]
+  movie_key int [ref: > dim_movie.movie_key]
   release_date_key int [not null, ref: > dim_date.date_key]
 
   // Measures
-  revenue_worldwide decimal(15,2) [note: 'Additive (A)']
-  revenue_domestic decimal(15,2) [note: 'Additive (A)']
-  revenue_international decimal(15,2) [note: 'Additive (A), Derived']
-  budget decimal(15,2) [note: 'Additive (A)']
-  profit decimal(15,2) [note: 'Additive (A), Derived']
+  revenue_worldwide_usd decimal(15,2) [note: 'Additive (A)']
+  revenue_domestic_usd decimal(15,2) [note: 'Additive (A)']
+  revenue_international_usd decimal(15,2) [note: 'Additive (A), Derived']
+  budget_usd decimal(15,2) [note: 'Additive (A)']
+  profit_usd decimal(15,2) [note: 'Additive (A), Derived']
   vote_count int [note: 'Additive (A), Support measure for vote_avg']
   vote_avg decimal(3,2) [note: 'Non-Additive (NA), Unit measure']
   weighted_score decimal(5,2) [note: 'Additive (A), Derived, Support measure for vote_avg']
   roi_ratio decimal(8,4) [note: 'Non-Additive (NA), Derived, Unit measure']
 
-  Note: 'Primary fact table (not a view/aggregate — finest available grain). Grain: 1 row per movie.'
+  indexes{
+    (movie_key) [pk]
+  }
+
+  Note: 'Primary fact table (not a view/aggregate — finest available grain). Grain: 1 row per movie. Identified by movie_key alone (no synthetic surrogate key).'
 }
 
 // 2. Movie Credit Fact (Factless Fact Schema)
 Table fact_movie_credit {
-  movie_credit_id int [pk, increment]
-  movie_key int [not null, ref: > dim_movie.movie_key]
-  person_key int [not null, ref: > dim_person.person_key]
-  credit_role_key int [not null, ref: > dim_credit_role.credit_role_key]
-  date_key int [not null, ref: > dim_date.date_key]
+  movie_key int [ref: > dim_movie.movie_key]
+  person_key int [ref: > dim_person.person_key]
+  credit_role_key int [ref: > dim_credit_role.credit_role_key]
+  release_date_key int [not null, ref: > dim_date.date_key]
 
-  Note: 'Factless fact table recording credit occurrences. Grain: 1 row per movie-person-credit_role occurrence.'
+  indexes {
+    (movie_key, person_key, credit_role_key) [pk]
+  }
+
+  Note: 'Factless fact table recording credit occurrences. Grain: 1 row per movie-person-credit_role occurrence. Identified by the composite (movie_key, person_key, credit_role_key) — no synthetic surrogate key, per standard factless-fact practice.'
 }
