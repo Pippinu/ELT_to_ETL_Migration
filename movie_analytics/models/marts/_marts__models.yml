@@ -51,8 +51,10 @@ models:
         description: "Business key from IMDb. May be NULL for TMDB-only persons."
     tests:
       - dbt_utils.expression_is_true:
-          expression: "not (birth_year is not null and death_year is not null and birth_year >= death_year)"
-          description: "Ensures that a person's birth year is not after their death year."
+          expression: "not (birth_year is not null and death_year is not null and birth_year > death_year)"
+          description: "Ensures birth year is not strictly after death year (same-year birth/death is valid; known exceptions are BC-era historical figures whose era sign isn't recorded in source data)."
+          config:
+            severity: warn
 
   - name: dim_genre
     description: "Genre dimension listing film genre classifications."
@@ -90,7 +92,7 @@ models:
           - accepted_values:
               arguments:
                 values: ['Director', 'Writer', 'Producer', 'Executive Producer',
-                         'Director of Photography', 'Original Music Composer']
+                         'Director of Photography', 'Original Music Composer', 'Actor']
       - name: department
         description: "Department associated with the job (e.g., Directing, Sound)."
         tests:

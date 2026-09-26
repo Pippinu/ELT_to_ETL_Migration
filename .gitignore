@@ -1,3 +1,4 @@
 data/raw/*.csv
 data/raw/*.tsv
 movie.duckdb
+movie_analytics/og_movie.duckdb
