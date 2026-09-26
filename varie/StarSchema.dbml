@@ -11,7 +11,7 @@ Table dim_date {
   year int [note: 'Hierarchy level']
   decade int [note: 'Hierarchy level']
 
-  Note: 'Shared Date Dimension (Hierarchy: Date -> Month -> Year -> Decade)'
+  Note: 'Shared Date Dimension (Hierarchy: Date -> Month -> Year -> Decade). Conformed across both facts.'
 }
 
 Table dim_movie {
@@ -21,7 +21,7 @@ Table dim_movie {
   title varchar [not null]
   budget_tier varchar [note: 'Derived dimensional attribute']
 
-  Note: 'Shared Movie Dimension'
+  Note: 'Shared Movie Dimension. Conformed across both facts.'
 }
 
 Table dim_person {
@@ -31,31 +31,20 @@ Table dim_person {
   birth_year int
   death_year int
 
-  Note: 'Person Dimension for Credits'
+  Note: 'Person Dimension for Credits. Local to fact_movie_credit.'
 }
 
 // =====================================================================
-// SNOWFLAKE CREDIT ROLE DIMENSION HIERARCHY
+// CREDIT ROLE DIMENSION (STAR — DENORMALIZED)
 // =====================================================================
-
-Table dim_department {
-  department_key int [pk, increment]
-  department_name varchar [not null]
-}
-
-Table dim_job {
-  job_key int [pk, increment]
-  department_key int [ref: > dim_department.department_key]
-  job_name varchar [not null]
-}
 
 Table dim_credit_role {
   credit_role_key int [pk, increment]
-  job_key int [ref: > dim_job.job_key]
-  credit_type varchar [note: 'CAST or CREW (Forked Hierarchy)']
-  role_name varchar [not null]
+  credit_type varchar [not null, note: 'CAST or CREW']
+  job varchar [not null, note: 'e.g. Director, Producer, Actor']
+  department varchar [not null, note: 'e.g. Directing, Sound, Acting']
 
-  Note: 'Forked Hierarchy: Credit Role -> Job -> Department AND Credit Role -> Credit Type'
+  Note: 'Denormalized credit role dimension. Local to fact_movie_credit. No snowflaking: job/department cardinality is low, so full denormalization is the correct star-schema choice here.'
 }
 
 // =====================================================================
@@ -65,6 +54,8 @@ Table dim_credit_role {
 Table dim_genre {
   genre_key int [pk, increment]
   genre_name varchar [not null]
+
+  Note: 'Reached only via bridge_movie_genre — a dimension of Movie, not of either fact directly.'
 }
 
 Table bridge_movie_genre {
@@ -75,7 +66,7 @@ Table bridge_movie_genre {
     (movie_key, genre_key) [pk]
   }
 
-  Note: 'Many-to-Many Bridge Table (Full Attribution Policy)'
+  Note: 'Many-to-Many Bridge Table (Full Attribution Policy — no weight column, unweighted impact-query semantics)'
 }
 
 // =====================================================================
@@ -91,15 +82,15 @@ Table fact_movie_performance {
   // Measures
   revenue_worldwide decimal(15,2) [note: 'Additive (A)']
   revenue_domestic decimal(15,2) [note: 'Additive (A)']
-  revenue_international decimal(15,2) [note: 'Additive (A)']
+  revenue_international decimal(15,2) [note: 'Additive (A), Derived']
   budget decimal(15,2) [note: 'Additive (A)']
-  profit decimal(15,2) [note: 'Additive (A)']
-  vote_count int [note: 'Additive (A)']
-  vote_avg decimal(3,2) [note: 'Non-Additive (NA)']
-  weighted_score decimal(5,2) [note: 'Additive (A)']
-  roi_ratio decimal(8,4) [note: 'Non-Additive (NA)']
+  profit decimal(15,2) [note: 'Additive (A), Derived']
+  vote_count int [note: 'Additive (A), Support measure for vote_avg']
+  vote_avg decimal(3,2) [note: 'Non-Additive (NA), Unit measure']
+  weighted_score decimal(5,2) [note: 'Additive (A), Derived, Support measure for vote_avg']
+  roi_ratio decimal(8,4) [note: 'Non-Additive (NA), Derived, Unit measure']
 
-  Note: 'Central performance fact table. Grain: 1 row per movie release.'
+  Note: 'Primary fact table (not a view/aggregate — finest available grain). Grain: 1 row per movie.'
 }
 
 // 2. Movie Credit Fact (Factless Fact Schema)
@@ -110,5 +101,5 @@ Table fact_movie_credit {
   credit_role_key int [not null, ref: > dim_credit_role.credit_role_key]
   date_key int [not null, ref: > dim_date.date_key]
 
-  Note: 'Factless fact table recording credit occurrences. Grain: 1 row per movie-person-credit occurrence.'
+  Note: 'Factless fact table recording credit occurrences. Grain: 1 row per movie-person-credit_role occurrence.'
 }
