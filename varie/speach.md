@@ -1,18 +1,20 @@
 ## Movie Analytics
 
-This is a movie analytics data warehouse. Beside the real implementation,I'll focus mostly on the dimensional fact model and the star schema, plus how the OLAP queries exercise both.
+This is a movie analytics data warehouse. Beside the real implementation, I'll focus mostly on the dimensional fact model and the star schema, plus how the OLAP queries exercise both.
 
-I implemented this analytics project starting from an ELT pipeline where i used dbt plus DuckDB rather than classic ETL and Postgres.
+This analytics project started as an ETL pipeline that used Apache NiFi's no-code flows to extract, transform and load data into Postgres. Here, instead, I built the ELT counterpart: I load the raw data into DuckDB, a columnar database, and use dbt transformations and tests to build the DB.
 
 ### ETL→ELT + Sources — 1 min
-Quickly on architecture: dbt gives declarative SQL transformations that runs directly in the data warehouse instead of a visual NiFi flow, same reconciliation step, just testable and git-friendly. 
+Quickly on architecture: 
+- In the NiFi version, the transformation logic lived inside **visual flows**, which are hard to read, review and reproduce. 
+- With dbt, the same logic is **declarative SQL**. It is version-controlled, tested and documented, so the pipeline can be easily reproduced.
 
 I used **Three heterogeneous sources**, pre processed separately before feeding them into the warehouse:
 - TMDB for metadata and nested JSON credits, 
 - Box Office for flat CSV revenue, 
 - IMDb for a large TSV of person biographical data.
 
-None share an identifier, which is really the whole integration problem in one sentence.
+None share an identifier, which is really the whole **integration problem** in one sentence.
 
 ### Integration Highlights — 1 min
 
@@ -23,22 +25,22 @@ Four things solve that:
 - a source-priority rule where Box Office wins over TMDB when both agree on a movie; 
 - a whitelist restricting crew to the roles that actually matter for analysis — Director, Writer, Producer, and a few others. 
 
-I won't dwell here — this is plumbing, not the graded design.
-
 ### DFM — 2.5 min, the core
-Here's the DFM. Two facts, not one, because they answer different questions at different grains: Movie Performance is one row per movie — how did it do — and Movie Credit is one row per credit occurrence — who worked on what. 
+Here's the DFM. **Two facts** which answer **different questions** at **different grains**: 
+- ***Movie Performance*** is one row per movie.
+- ***Movie Credit*** is one row per credit occurrence.
 Forcing those into a single fact would mean picking a grain that's wrong for one of the two.
 
 Conformance is asymmetric on purpose. 
-- ***Date*** and ***Movie*** are genuinely conformed — same surrogate key reused in both facts, which is what lets me drill across and ask something like 'a director's average profit' by joining both facts through Movie. 
-- ***Person*** and ***Credit Role*** stay **local** to Movie Credit, because they have no meaning in Performance — conforming them would be conformance for its own sake.
+- ***Date*** and ***Movie*** are **genuinely conformed** — same surrogate key reused in both facts, which is what lets me drill across and ask something like 'a director's average profit' by joining both facts through Movie. 
+- ***Person*** and ***Credit Role*** stay **local** to Movie Credit, because they have **no meaning in Performance** — conforming them would be conformance for its own sake.
 
-Movie Credit itself is a **factless fact**, deliberately — there's no natural numeric measure for 'this credit occurred,' the occurrence is the information, so I use COUNT at query time rather than inventing one.
+Movie Credit itself is a **factless fact**, deliberately — there's **no natural numeric measure** for 'this credit occurred,' the **occurrence is the information**, so I use COUNT at query time rather than inventing one.
 
-And additivity drove the measure design directly: ***vote_avg*** and ***roi_ratio*** are **non-additive** ratios, so rather than leaving that as a trap, I carry vote_count and weighted_score as explicit **support measures** — every query recomputes the aggregate ratio from its components instead of naively averaging an average.
+***Additivity*** drove the measure design directly in the Movie Performance fact. Anyway, ***vote_avg*** and ***roi_ratio*** are **non-additive** ratios, so I carry ***vote_count*** and ***weighted_score*** as explicit **support measures** that are used in every query to recompute the aggregate ratio correctly instead of wrongly averaging an average.
 
 ### Star Schema — 2 min
-Translating that to the logical layer, four decisions matter more than the diagram itself.
+Now, this is the star schema, four decisions in particular drove this design:
 
 1. It's a **pure star**, not a snowflake. Snowflaking pays off with high secondary-to-primary cardinality or a hierarchy shared across dimensions; neither applies to job and department, which have a handful of values each, so dim_credit_role stays flat.
 
