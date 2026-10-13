@@ -5,9 +5,9 @@ This is a movie analytics data warehouse. Beside the real implementation,I'll fo
 I implemented this analytics project starting from an ELT pipeline where i used dbt plus DuckDB rather than classic ETL and Postgres.
 
 ### ETL→ELT + Sources — 1 min
-Quickly on architecture: dbt gives declarative, version-controlled SQL transformations instead of an opaque visual NiFi flow — same reconciliation step, just testable and diffable. 
+Quickly on architecture: dbt gives declarative SQL transformations that runs directly in the data warehouse instead of a visual NiFi flow, same reconciliation step, just testable and git-friendly. 
 
-**Three sources** feed it: 
+I used **Three heterogeneous sources**, pre processed separately before feeding them into the warehouse:
 - TMDB for metadata and nested JSON credits, 
 - Box Office for flat CSV revenue, 
 - IMDb for a large TSV of person biographical data.
@@ -17,7 +17,7 @@ None share an identifier, which is really the whole integration problem in one s
 ### Integration Highlights — 1 min
 
 Four things solve that: 
-- fuzzy title matching between TMDB and Box Office on a 0-to-4 score.
+- movies title matching between TMDB and Box Office on a 0-to-4 score.
 - exact title-plus-year down to substring match with deterministic tie-breaking via a window function; 
 - exact name matching for people against IMDb; 
 - a source-priority rule where Box Office wins over TMDB when both agree on a movie; 
